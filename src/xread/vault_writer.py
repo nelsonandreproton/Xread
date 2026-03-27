@@ -75,7 +75,10 @@ def write_to_vault(
     note_path.write_text(note_content, encoding="utf-8")
     logger.info("Note written: %s", note_path)
 
-    # Configure git to use GitHub token for HTTPS push
+    # Configure git identity and auth for commit + push
+    _git(["config", "user.email", "garminbot@localhost"], cwd=vault_path)
+    _git(["config", "user.name", "GarminBot"], cwd=vault_path)
+
     github_token = os.environ.get("GITHUB_TOKEN", "")
     if github_token:
         _git(["config", "http.extraheader", f"Authorization: Bearer {github_token}"], cwd=vault_path)
