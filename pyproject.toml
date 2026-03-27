@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xread"
+version = "0.1.0"
+description = "Fetch and analyse X/Twitter posts into Obsidian vault"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+    "groq>=0.9",
+    "python-dotenv>=1.0",
+    "tenacity>=8.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-mock>=3.12"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
