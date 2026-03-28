@@ -44,7 +44,7 @@ tags: [{tags_yaml}]
 
 
 def _git(args: list[str], cwd: str) -> None:
-    """Run a git command in the vault directory. Raises on failure."""
+    """Run a git command. Raises on failure."""
     result = subprocess.run(
         ["git"] + args,
         cwd=cwd,
@@ -53,6 +53,19 @@ def _git(args: list[str], cwd: str) -> None:
     )
     if result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+
+
+def _git_root(path: str) -> str:
+    """Return the git repository root for the given path."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=path,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return result.stdout.strip()
+    return path
 
 
 def write_to_vault(
@@ -75,21 +88,23 @@ def write_to_vault(
     note_path.write_text(note_content, encoding="utf-8")
     logger.info("Note written: %s", note_path)
 
+    git_root = _git_root(vault_path)
+    relative_path = str(note_path.relative_to(git_root))
+
     github_token = os.environ.get("GITHUB_TOKEN", "")
     if github_token:
-        _git(["config", "http.extraheader", f"Authorization: Bearer {github_token}"], cwd=vault_path)
+        _git(["config", "http.extraheader", f"Authorization: Bearer {github_token}"], cwd=git_root)
 
-    relative_path = f"reads/{filename}"
-    _git(["add", relative_path], cwd=vault_path)
+    _git(["add", relative_path], cwd=git_root)
     _git(
         [
             "-c", "user.email=garminbot@localhost",
             "-c", "user.name=GarminBot",
             "commit", "-m", f"xread: {insight.title[:60]}",
         ],
-        cwd=vault_path,
+        cwd=git_root,
     )
-    _git(["push"], cwd=vault_path)
+    _git(["push"], cwd=git_root)
 
     logger.info("Pushed note to GitHub: %s", filename)
     return filename
