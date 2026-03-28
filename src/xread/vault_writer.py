@@ -1,11 +1,15 @@
-"""Write a Read note to the Obsidian vault and push to GitHub."""
+"""Write a Read note to the Obsidian vault and push to GitHub via API."""
 
+import base64
 import logging
 import os
 import re
 import subprocess
 from datetime import datetime, UTC
 from pathlib import Path
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+import json
 
 from .fetcher import TweetData
 from .analyser import ReadInsight
@@ -68,12 +72,47 @@ def _git_root(path: str) -> str:
     return path
 
 
+def _github_api_push(token: str, repo_slug: str, file_path: str, content: str, commit_message: str) -> None:
+    """Create or update a file in a GitHub repo via the Contents API."""
+    url = f"https://api.github.com/repos/{repo_slug}/contents/{file_path}"
+    encoded = base64.b64encode(content.encode()).decode()
+
+    # Check if file already exists (need its SHA to update)
+    req = Request(url, headers={"Authorization": f"token {token}", "User-Agent": "GarminBot"})
+    sha = None
+    try:
+        with urlopen(req) as resp:
+            sha = json.loads(resp.read())["sha"]
+    except HTTPError:
+        pass  # File doesn't exist yet — create it
+
+    payload: dict = {"message": commit_message, "content": encoded, "committer": {"name": "GarminBot", "email": "garminbot@localhost"}}
+    if sha:
+        payload["sha"] = sha
+
+    put_req = Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": f"token {token}", "Content-Type": "application/json", "User-Agent": "GarminBot"},
+        method="PUT",
+    )
+    with urlopen(put_req) as resp:
+        result = json.loads(resp.read())
+    logger.info("GitHub API push: %s", result.get("commit", {}).get("sha", "?"))
+
+
+def _parse_github_repo(remote_url: str) -> str | None:
+    """Extract 'owner/repo' from a GitHub remote URL."""
+    m = re.search(r"github\.com[:/](.+?/[^/]+?)(?:\.git)?$", remote_url)
+    return m.group(1) if m else None
+
+
 def write_to_vault(
     tweet: TweetData,
     insight: ReadInsight,
     vault_path: str | None = None,
 ) -> str:
-    """Write note to reads/ folder, commit and push. Returns the note filename."""
+    """Write note to reads/ folder and push to GitHub. Returns the note filename."""
     vault_path = vault_path or os.environ["OBSIDIAN_VAULT_PATH"]
     vault = Path(vault_path)
     reads_dir = vault / "reads"
@@ -88,33 +127,30 @@ def write_to_vault(
     note_path.write_text(note_content, encoding="utf-8")
     logger.info("Note written: %s", note_path)
 
-    git_root = _git_root(vault_path)
-    relative_path = str(note_path.relative_to(git_root))
-
     github_token = os.environ.get("GITHUB_TOKEN", "")
+    if not github_token:
+        logger.warning("GITHUB_TOKEN not set — skipping GitHub push")
+        return filename
 
-    _git(["add", relative_path], cwd=git_root)
-    _git(
-        [
-            "-c", "user.email=garminbot@localhost",
-            "-c", "user.name=GarminBot",
-            "commit", "-m", f"xread: {insight.title[:60]}",
-        ],
-        cwd=git_root,
-    )
-
-    # Build authenticated push URL from the current remote URL
+    git_root = _git_root(vault_path)
     result = subprocess.run(
         ["git", "remote", "get-url", "origin"],
         cwd=git_root, capture_output=True, text=True,
     )
     remote_url = result.stdout.strip()
-    if github_token and remote_url.startswith("https://github.com/"):
-        repo_path = remote_url.removeprefix("https://github.com/")
-        auth_url = f"https://x-access-token:{github_token}@github.com/{repo_path}"
-        _git(["push", auth_url], cwd=git_root)
-    else:
-        _git(["push"], cwd=git_root)
+    repo_slug = _parse_github_repo(remote_url)
 
-    logger.info("Pushed note to GitHub: %s", filename)
+    if not repo_slug:
+        logger.warning("Could not parse GitHub repo from remote: %s — skipping push", remote_url)
+        return filename
+
+    relative_path = str(note_path.relative_to(git_root)).replace("\\", "/")
+    _github_api_push(
+        token=github_token,
+        repo_slug=repo_slug,
+        file_path=relative_path,
+        content=note_content,
+        commit_message=f"xread: {insight.title[:60]}",
+    )
+
     return filename
