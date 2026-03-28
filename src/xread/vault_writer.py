@@ -111,7 +111,7 @@ def write_to_vault(
     remote_url = result.stdout.strip()
     if github_token and remote_url.startswith("https://github.com/"):
         repo_path = remote_url.removeprefix("https://github.com/")
-        auth_url = f"https://{github_token}@github.com/{repo_path}"
+        auth_url = f"https://x-access-token:{github_token}@github.com/{repo_path}"
         _git(["push", auth_url], cwd=git_root)
     else:
         _git(["push"], cwd=git_root)
