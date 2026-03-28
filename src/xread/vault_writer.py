@@ -92,8 +92,6 @@ def write_to_vault(
     relative_path = str(note_path.relative_to(git_root))
 
     github_token = os.environ.get("GITHUB_TOKEN", "")
-    if github_token:
-        _git(["config", "http.extraheader", f"Authorization: Bearer {github_token}"], cwd=git_root)
 
     _git(["add", relative_path], cwd=git_root)
     _git(
@@ -104,7 +102,19 @@ def write_to_vault(
         ],
         cwd=git_root,
     )
-    _git(["push"], cwd=git_root)
+
+    # Build authenticated push URL from the current remote URL
+    result = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=git_root, capture_output=True, text=True,
+    )
+    remote_url = result.stdout.strip()
+    if github_token and remote_url.startswith("https://github.com/"):
+        repo_path = remote_url.removeprefix("https://github.com/")
+        auth_url = f"https://{github_token}@github.com/{repo_path}"
+        _git(["push", auth_url], cwd=git_root)
+    else:
+        _git(["push"], cwd=git_root)
 
     logger.info("Pushed note to GitHub: %s", filename)
     return filename
